@@ -38,17 +38,4 @@ Databases & Tools: MySQL / ChromaDB (for vector storage)
 
 Concepts: Agentic RAG, API Development, AI Integration
 
-📂 Project Structure (example)
-
-College_AI_Project/
-│
-├── app/
-│   ├── main.py             # FastAPI entry point
-│   ├── routes/             # API routes (chat, files, auth)
-│   ├── services/           # LangChain + RAG logic
-│   ├── database/           # DB connections (MySQL / ChromaDB)
-│   └── models/             # Data models (Pydantic / SQLAlchemy)
-│
-├── requirements.txt        # Python dependencies
-├── README.md               # Documentation
-└── screenshots/            # Optional: UI/API screenshots
+(THE PROJECT IS STILL UNDER DEVELOPMENT)
