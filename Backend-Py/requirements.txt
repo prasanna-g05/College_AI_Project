@@ -1,0 +1,17 @@
+chromadb
+langchain
+langchain-community
+sentence-transformers
+PyPDF2
+python-dotenv
+requests
+loguru
+rich
+cachetools
+fastapi
+uvicorn
+python-jose[cryptography]==3.3.0
+
+# Phase 2: Database and Auth
+sqlalchemy==2.0.23
+passlib[bcrypt]==1.7.4
