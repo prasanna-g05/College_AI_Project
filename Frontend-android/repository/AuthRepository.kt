@@ -1,5 +1,6 @@
 package com.pce.itassistant.repository
 
+import com.pce.itassistant.data.AuthSession
 import com.pce.itassistant.data.LoginRequest
 import com.pce.itassistant.data.RegisterRequest
 import com.pce.itassistant.data.RegisterResponse
@@ -14,17 +15,30 @@ class AuthRepository {
 
     private val apiService = ApiService.getInstance
 
-    // Updated loginUser method
-    suspend fun loginUser(erpNumber: String, password: String): Result<Student> {
+    suspend fun loginUser(erpNumber: String, password: String): Result<AuthSession> {
         return withContext(Dispatchers.IO) {
             try {
                 val response = apiService.loginUser(LoginRequest(erpNumber, password))
+
                 if (response.isSuccessful) {
-                    response.body()?.student?.let {
-                        Result.success(it)
-                    } ?: Result.failure(Exception("User data missing in login response"))
+                    val body = response.body()
+
+                    val accessToken = body?.accessToken
+                    val tokenType = body?.tokenType
+                    val student = body?.student
+
+                    if (!accessToken.isNullOrBlank() && !tokenType.isNullOrBlank() && student != null) {
+                        Result.success(
+                            AuthSession(
+                                accessToken = accessToken,
+                                tokenType = tokenType,
+                                student = student
+                            )
+                        )
+                    } else {
+                        Result.failure(Exception("Incomplete login response from server"))
+                    }
                 } else {
-                    // Try to parse error message from response error body
                     val errorMsg = response.errorBody()?.string()?.let { errorBodyStr ->
                         try {
                             val jsonObj = JSONObject(errorBodyStr)
@@ -42,8 +56,6 @@ class AuthRepository {
         }
     }
 
-
-
     suspend fun registerUser(request: RegisterRequest): Result<Student> {
         return withContext(Dispatchers.IO) {
             try {
@@ -53,11 +65,20 @@ class AuthRepository {
                         if (registerResponse.user != null) {
                             Result.success(registerResponse.user)
                         } else {
-                            Result.failure(Exception(registerResponse.message ?: "Registration failed"))
+                            Result.failure(Exception(registerResponse.message.ifBlank { "Registration failed" }))
                         }
                     } ?: Result.failure(Exception("Empty response body"))
                 } else {
-                    Result.failure(Exception("Registration failed: HTTP ${response.code()} - ${response.message()}"))
+                    val errorMsg = response.errorBody()?.string()?.let { errorBodyStr ->
+                        try {
+                            val jsonObj = JSONObject(errorBodyStr)
+                            jsonObj.optString("detail", "Registration failed")
+                        } catch (e: Exception) {
+                            "Registration failed"
+                        }
+                    } ?: "Registration failed"
+
+                    Result.failure(Exception(errorMsg))
                 }
             } catch (e: Exception) {
                 Result.failure(e)
