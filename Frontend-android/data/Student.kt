@@ -13,8 +13,11 @@ data class Student(
     val year: String? = null,
     val semester: String? = null,
     val section: String? = null,
+    @SerializedName("roll_number")
     val rollNumber: String? = null,
     val email: String? = null,
-    val phone: String? = null
+    val phone: String? = null,
+    val role: String = "student",  // ✅ NEW: Added for admin detection
+    @SerializedName("is_active")
+    val isActive: Boolean = true   // ✅ NEW: Backend field
 ) : Parcelable
-
