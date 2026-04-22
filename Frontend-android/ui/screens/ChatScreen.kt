@@ -55,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.pce.itassistant.R
 import com.pce.itassistant.data.ChatMessage
+import com.pce.itassistant.data.MatchingFile
 import com.pce.itassistant.ui.chatbot.ChatbotViewModel
 import com.pce.itassistant.utils.SessionManager
 import java.text.SimpleDateFormat
@@ -70,12 +71,14 @@ fun ChatScreen(navController: NavHostController) {
     val viewModel: ChatbotViewModel = viewModel(
         factory = ChatbotViewModel.Factory(context)
     )
+
     val messages by viewModel.messages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val downloadStatus by viewModel.downloadStatus.collectAsState()
+
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    // Session check: Redirect if not logged in
     LaunchedEffect(student) {
         if (student == null) {
             Toast.makeText(context, "Please login to access chatbot.", Toast.LENGTH_SHORT).show()
@@ -86,7 +89,10 @@ fun ChatScreen(navController: NavHostController) {
     }
 
     if (student == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             CircularProgressIndicator()
         }
         return
@@ -97,16 +103,27 @@ fun ChatScreen(navController: NavHostController) {
         student.name ?: "Student"
     )
 
-    // Load welcome message on first compose (if messages empty)
     LaunchedEffect(Unit) {
         if (messages.isEmpty()) {
-            val welcomeMessage = ChatMessage(
-                content = chatBotWelcome,
-                isUser = false
+            viewModel.addMessage(
+                ChatMessage(
+                    content = chatBotWelcome,
+                    isUser = false
+                )
             )
-            viewModel.addMessage(welcomeMessage)
         }
-        listState.animateScrollToItem(index = messages.size)
+    }
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    LaunchedEffect(downloadStatus) {
+        downloadStatus?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+        }
     }
 
     Scaffold(
@@ -115,7 +132,10 @@ fun ChatScreen(navController: NavHostController) {
                 title = { Text(stringResource(R.string.chatbot_header)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.navigateUp() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.nav_back))
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = stringResource(R.string.nav_back)
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -129,28 +149,31 @@ fun ChatScreen(navController: NavHostController) {
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Messages List (reversed: latest at bottom, emulating XML scroll)
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp),  // Tighter padding like XML
+                    .padding(horizontal = 8.dp),
                 state = listState,
-                reverseLayout = true,
-                verticalArrangement = Arrangement.spacedBy(4.dp),  // Closer spacing
+                verticalArrangement = Arrangement.spacedBy(4.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(messages.reversed()) { message ->
+                items(
+                    items = messages,
+                    key = { it.id }
+                ) { message ->
                     MessageBubble(
                         message = message,
                         onFileDownload = {
                             viewModel.downloadFromMessage(message, context)
+                        },
+                        onMatchingFileDownload = { matchingFile ->
+                            viewModel.downloadMatchingFile(matchingFile, context)
                         }
                     )
                 }
             }
 
             if (isLoading) {
-                // Loading as small bot bubble, like previous XML indicator
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -158,8 +181,15 @@ fun ChatScreen(navController: NavHostController) {
                     horizontalArrangement = Arrangement.Start
                 ) {
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                        shape = RoundedCornerShape(topEnd = 8.dp, bottomEnd = 16.dp, topStart = 8.dp, bottomStart = 16.dp)
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        shape = RoundedCornerShape(
+                            topStart = 8.dp,
+                            topEnd = 8.dp,
+                            bottomStart = 16.dp,
+                            bottomEnd = 16.dp
+                        )
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -177,7 +207,6 @@ fun ChatScreen(navController: NavHostController) {
                 }
             }
 
-            // Input Row (styled like XML footer)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -190,18 +219,20 @@ fun ChatScreen(navController: NavHostController) {
                     label = { Text(stringResource(R.string.type_message)) },
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(24.dp)),  // Rounded like XML
+                        .clip(RoundedCornerShape(24.dp)),
                     enabled = !isLoading,
-                    maxLines = 4  // Allow multi-line input
+                    maxLines = 4
                 )
+
                 Spacer(modifier = Modifier.width(8.dp))
+
                 val emptyMessageStr = stringResource(R.string.empty_message)
+
                 IconButton(
                     onClick = {
                         val trimmed = messageText.trim()
                         if (trimmed.isNotEmpty() && !isLoading) {
-                            // Fixed: Remove addMessage here to avoid duplicate; ViewModel handles it
-                            viewModel.sendMessage(trimmed)  // Single param; no erpNumber
+                            viewModel.sendMessage(trimmed)
                             messageText = ""
                         } else if (trimmed.isEmpty()) {
                             Toast.makeText(context, emptyMessageStr, Toast.LENGTH_SHORT).show()
@@ -210,12 +241,13 @@ fun ChatScreen(navController: NavHostController) {
                     enabled = messageText.trim().isNotEmpty() && !isLoading
                 ) {
                     Icon(
-                        Icons.Default.Send,
+                        imageVector = Icons.Default.Send,
                         contentDescription = stringResource(R.string.send_message),
                         modifier = Modifier
-                            .size(48.dp)  // Larger like XML
+                            .size(48.dp)
                             .clip(RoundedCornerShape(24.dp))
-                            .background(MaterialTheme.colorScheme.primary)
+                            .background(MaterialTheme.colorScheme.primary),
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
@@ -226,25 +258,26 @@ fun ChatScreen(navController: NavHostController) {
 @Composable
 private fun MessageBubble(
     message: ChatMessage,
-    onFileDownload: () -> Unit
+    onFileDownload: () -> Unit,
+    onMatchingFileDownload: (MatchingFile) -> Unit
 ) {
     val isUser = message.isUser
-    val isError = message.isError == true  // Null-safe
+    val isError = message.isError
     val hasFile = !isUser && message.fileDownload != null
-    val bubbleColor = if (isError) {
-        MaterialTheme.colorScheme.errorContainer
-    } else if (isUser) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
+    val hasMatchingFiles = !isUser && message.matchingFiles.isNotEmpty()
+
+    val bubbleColor = when {
+        isError -> MaterialTheme.colorScheme.errorContainer
+        isUser -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val textColor = if (isError) {
-        MaterialTheme.colorScheme.onErrorContainer
-    } else if (isUser) {
-        MaterialTheme.colorScheme.onPrimary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
+
+    val textColor = when {
+        isError -> MaterialTheme.colorScheme.onErrorContainer
+        isUser -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
+
     val timestamp = remember(message.timestamp) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
     }
@@ -252,7 +285,12 @@ private fun MessageBubble(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = if(isUser) 48.dp else 8.dp,end=if(isUser) 8.dp else 48.dp,top=2.dp,bottom=2.dp),
+            .padding(
+                start = if (isUser) 48.dp else 8.dp,
+                end = if (isUser) 8.dp else 48.dp,
+                top = 2.dp,
+                bottom = 2.dp
+            ),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         Card(
@@ -260,55 +298,46 @@ private fun MessageBubble(
             shape = RoundedCornerShape(
                 topStart = 12.dp,
                 topEnd = 12.dp,
-                bottomStart = if (isUser) 4.dp else 20.dp,  // Asymmetric like XML bot/user
+                bottomStart = if (isUser) 4.dp else 20.dp,
                 bottomEnd = if (isUser) 20.dp else 4.dp
             ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)  // Subtle shadow
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                // Full text without truncation; scrolls in LazyColumn
                 Text(
                     text = message.content,
                     color = textColor,
                     style = MaterialTheme.typography.bodyMedium,
-                    maxLines = Int.MAX_VALUE,  // Fixed: No limit for full RAG answers
-                    overflow = TextOverflow.Visible  // Fixed: Show all content
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Visible
                 )
+
                 if (hasFile) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    DownloadChip(
+                        text = message.fileDownload?.filename ?: "Download file",
+                        onClick = onFileDownload
+                    )
+                }
+
+                if (hasMatchingFiles) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Available files:",
+                        color = textColor,
+                        style = MaterialTheme.typography.labelMedium
+                    )
                     Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        Card(
-                            modifier = Modifier
-                                .clickable { onFileDownload() }
-                                .padding(end = 4.dp), // margin right of the download box
-                            shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(MaterialTheme.colorScheme.secondaryContainer),
-                            elevation = CardDefaults.cardElevation(2.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_download), // or Icons.Default.Download
-                                    contentDescription = "Download",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = message.fileDownload?.filename ?: "Download file",
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                        }
+
+                    message.matchingFiles.forEach { file ->
+                        DownloadChip(
+                            text = file.filename ?: "Download file",
+                            onClick = { onMatchingFileDownload(file) }
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
                     }
                 }
 
-                // Timestamp like XML (bottom, smaller font)
                 Text(
                     text = timestamp,
                     color = textColor.copy(alpha = 0.6f),
@@ -320,6 +349,40 @@ private fun MessageBubble(
                         .padding(top = 4.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DownloadChip(
+    text: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .clickable { onClick() }
+            .padding(end = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_download),
+                contentDescription = "Download",
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = text,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
     }
 }

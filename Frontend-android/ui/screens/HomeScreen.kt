@@ -201,7 +201,7 @@ fun HomeScreen(navController: NavHostController) {
                             icon = R.drawable.ic_work,  // Your drawable ID (Int)
                             title = trainingPlacementStr,
                             desc = trainingPlacementDescStr,
-                            onClick = { showTrainingToast = true }
+                            onClick = { navController.navigate("student_tnp") }
                         )
                     )
                 ) { service ->

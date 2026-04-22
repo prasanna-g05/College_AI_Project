@@ -69,25 +69,39 @@ fun LoginScreen(navController: NavHostController) {
 
     val loginState by viewModel.loginState.collectAsState()
     val apiHealth by viewModel.apiHealth.collectAsState()
-    val loginSuccessEvent by viewModel.loginSuccessEvent
+    val navigationEvent by viewModel.navigationEvent.collectAsState()
 
     var passwordVisible by remember { mutableStateOf(false) }
+    var erpText by remember { mutableStateOf("") }
+    var passwordText by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         viewModel.checkApiHealth()
     }
 
-    val loginSuccessStr = stringResource(R.string.login_success)
-    LaunchedEffect(loginSuccessEvent) {
-        if (loginSuccessEvent) {
-            (viewModel.loginState.value as? LoginViewModel.LoginState.Success)?.student?.let { student ->
-                sessionManager.saveLoginSession(student)
+    LaunchedEffect(navigationEvent, loginState) {
+        val route = navigationEvent
+        val successState = loginState as? LoginViewModel.LoginState.Success
+
+        if (route != null && successState != null) {
+            sessionManager.saveLoginSession(successState.authSession)
+
+            when (route) {
+                "admin_screen" -> {
+                    Toast.makeText(context, "Welcome Admin!", Toast.LENGTH_SHORT).show()
+                    navController.navigate("admin_screen") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                }
+                "home" -> {
+                    navController.navigate("home") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                }
             }
-            Toast.makeText(context, loginSuccessStr, Toast.LENGTH_SHORT).show()
+
+            viewModel.navigationEventConsumed()
             viewModel.loginSuccessEventConsumed()
-            navController.navigate("home") {
-                popUpTo("login") { inclusive = true }
-            }
         }
     }
 
@@ -114,12 +128,15 @@ fun LoginScreen(navController: NavHostController) {
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
+
         Spacer(modifier = Modifier.height(8.dp))
+
         Text(
             text = stringResource(R.string.login_subtitle),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
         Spacer(modifier = Modifier.height(24.dp))
 
         val healthColor = when (apiHealth) {
@@ -130,7 +147,9 @@ fun LoginScreen(navController: NavHostController) {
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
         ) {
             Row(
                 modifier = Modifier
@@ -144,6 +163,7 @@ fun LoginScreen(navController: NavHostController) {
                     contentDescription = null,
                     tint = healthColor
                 )
+
                 Column {
                     Text(
                         text = stringResource(R.string.api_status),
@@ -164,9 +184,6 @@ fun LoginScreen(navController: NavHostController) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        var erpText by remember { mutableStateOf("") }
-        var passwordText by remember { mutableStateOf("") }
-
         OutlinedTextField(
             value = erpText,
             onValueChange = { erpText = it },
@@ -185,14 +202,27 @@ fun LoginScreen(navController: NavHostController) {
             onValueChange = { passwordText = it },
             label = { Text(stringResource(R.string.password_label)) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            visualTransformation = if (passwordVisible) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
             trailingIcon = {
-                val image = if (passwordVisible)
+                val image = if (passwordVisible) {
                     Icons.Filled.Visibility
-                else Icons.Filled.VisibilityOff
+                } else {
+                    Icons.Filled.VisibilityOff
+                }
 
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(imageVector = image, contentDescription = if (passwordVisible) "Hide password" else "Show password")
+                    Icon(
+                        imageVector = image,
+                        contentDescription = if (passwordVisible) {
+                            "Hide password"
+                        } else {
+                            "Show password"
+                        }
+                    )
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -214,9 +244,8 @@ fun LoginScreen(navController: NavHostController) {
                     .padding(top = 4.dp)
             )
 
-            // Auto redirect on "no password" message from backend
             if (it.contains("no password", ignoreCase = true)) {
-                LaunchedEffect(Unit) {
+                LaunchedEffect(it) {
                     navController.navigate("register")
                 }
             }
@@ -242,9 +271,9 @@ fun LoginScreen(navController: NavHostController) {
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = viewModel.isValidErpNumber(erpText)
-                    && passwordText.isNotBlank()
-                    && loginState !is LoginViewModel.LoginState.Loading
+            enabled = viewModel.isValidErpNumber(erpText) &&
+                    passwordText.isNotBlank() &&
+                    loginState !is LoginViewModel.LoginState.Loading
         ) {
             when (loginState) {
                 is LoginViewModel.LoginState.Loading -> {
@@ -262,7 +291,6 @@ fun LoginScreen(navController: NavHostController) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Registration redirect text
         Text(
             text = stringResource(R.string.register_prompt),
             color = MaterialTheme.colorScheme.primary,

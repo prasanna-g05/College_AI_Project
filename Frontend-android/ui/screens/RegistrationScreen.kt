@@ -164,14 +164,29 @@ fun RegistrationScreen(
                             rollNumber = rollNumber
                         )
                         val result = viewModel.registerUser(request)
-                        registrationState = if (result.isSuccess) {
+                        if (result.isSuccess) {
                             Toast.makeText(context, "Registration Successful", Toast.LENGTH_LONG).show()
+                            registrationState = LoginViewModel.LoginState.Idle
                             navController.navigate("login") {
                                 popUpTo("register") { inclusive = true }
                             }
-                            LoginViewModel.LoginState.Success(result.getOrNull()!!)
                         } else {
-                            LoginViewModel.LoginState.Error(result.exceptionOrNull()?.message ?: "Registration Failed")
+                            val errorMessage = result.exceptionOrNull()?.message ?: "Registration Failed"
+
+                            registrationState = LoginViewModel.LoginState.Error(errorMessage)
+
+                            val toastMessage = when {
+                                errorMessage.contains("not approved", ignoreCase = true) ||
+                                        errorMessage.contains("not authorized", ignoreCase = true) -> {
+                                    "ERP number not authorized, please contact admin"
+                                }
+                                errorMessage.contains("already registered", ignoreCase = true) -> {
+                                    "ERP number already registered"
+                                }
+                                else -> errorMessage
+                            }
+
+                            Toast.makeText(context, toastMessage, Toast.LENGTH_LONG).show()
                         }
                     }
                 },
