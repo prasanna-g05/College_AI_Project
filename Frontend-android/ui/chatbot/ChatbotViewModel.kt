@@ -8,28 +8,31 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pce.itassistant.data.ChatMessage
+import com.pce.itassistant.data.MatchingFile
 import com.pce.itassistant.repository.ChatRepository
 import com.pce.itassistant.utils.SessionManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
-class ChatbotViewModel(private val context: Context) : ViewModel() {  // Inject Context
-    private val chatRepository = ChatRepository(context)  // Pass Context to repo
+class ChatbotViewModel(private val context: Context) : ViewModel() {
+    private val chatRepository = ChatRepository(context)
 
-    private val _messages = kotlinx.coroutines.flow.MutableStateFlow<List<ChatMessage>>(emptyList())
-    val messages: kotlinx.coroutines.flow.StateFlow<List<ChatMessage>> = _messages
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages
 
-    private val _isLoading = kotlinx.coroutines.flow.MutableStateFlow(false)
-    val isLoading: kotlinx.coroutines.flow.StateFlow<Boolean> = _isLoading
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
 
-    private val _downloadStatus = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
-    val downloadStatus: kotlinx.coroutines.flow.StateFlow<String?> = _downloadStatus
+    private val _downloadStatus = MutableStateFlow<String?>(null)
+    val downloadStatus: StateFlow<String?> = _downloadStatus
 
-    private val _connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(false)
-    val connectionStatus: kotlinx.coroutines.flow.StateFlow<Boolean> = _connectionStatus
+    private val _connectionStatus = MutableStateFlow(false)
+    val connectionStatus: StateFlow<Boolean> = _connectionStatus
 
-    private val sessionManager = SessionManager(context)  // For student context
+    private val sessionManager = SessionManager(context)
 
     init {
         checkConnection()
@@ -39,82 +42,85 @@ class ChatbotViewModel(private val context: Context) : ViewModel() {  // Inject 
         _messages.value = _messages.value + message
     }
 
-    fun sendMessage(message: String) {  // Remove erpNumber; fetch from SessionManager
+    fun sendMessage(message: String) {
         Log.d("ChatbotViewModel", "sendMessage called with message: '$message'")
+
         val student = sessionManager.getStudent()
-        val erpNumber = student!!.erpNumber
-        // Optional: Extract year/semester/course from student or shared prefs if available
+        if (student == null) {
+            _messages.value = _messages.value + ChatMessage(
+                content = "Session expired. Please login again.",
+                isUser = false,
+                isError = true
+            )
+            return
+        }
 
         viewModelScope.launch {
             _isLoading.value = true
-            addMessage(ChatMessage(content = message, isUser = true))  // Add user message immediately
+            addMessage(ChatMessage(content = message, isUser = true))
 
             val result = chatRepository.sendMessage(
                 message = message,
-                erpNumber = erpNumber,
-                year = student.year,  // Assume Student has these; add if needed
+                erpNumber = student.erpNumber,
+                year = student.year,
                 semester = student.semester,
-                course = null  // Or from current screen state
+                course = null
             )
 
             if (result.isSuccess) {
-                val botMessage = result.getOrNull()!!  // Safe cast post-check
-                _messages.value = _messages.value + botMessage
+                val botMessage = result.getOrNull()
+                if (botMessage != null) {
+                    _messages.value = _messages.value + botMessage
+                } else {
+                    _messages.value = _messages.value + ChatMessage(
+                        content = "Empty response received from server.",
+                        isUser = false,
+                        isError = true
+                    )
+                }
             } else {
                 val exception = result.exceptionOrNull()
                 Log.e("ChatbotViewModel", "Send message failed", exception)
-                val errorMessage = ChatMessage(
+                _messages.value = _messages.value + ChatMessage(
                     content = "Sorry, I couldn't process your request. Please try again.\n\nError: ${exception?.message ?: "Unknown error"}",
                     isUser = false,
                     isError = true
                 )
-                _messages.value = _messages.value + errorMessage
             }
 
             _isLoading.value = false
         }
     }
 
-    fun downloadFromMessage(message: ChatMessage, context: Context) {  // New: Handle FileDownload in message
-        val fileDownload = message.fileDownload
-        if (fileDownload != null) {
-            viewModelScope.launch {
-                _downloadStatus.value = "Downloading ${fileDownload.filename}..."
-                val result = if (fileDownload.url.isNotEmpty()) {
-                    chatRepository.downloadFromUrl(fileDownload, context)  // If URL provided
-                } else {
-                    chatRepository.downloadFile(fileDownload.filename, context)  // Fallback to filename
-                }
+    fun downloadFromMessage(message: ChatMessage, context: Context) {
+        val fileDownload = message.fileDownload ?: run {
+            showTemporaryStatus("No downloadable file found.")
+            return
+        }
 
-                if (result.isSuccess) {
-                    val file = result.getOrNull()!!
+        val filename = fileDownload.filename
+        if (filename.isNullOrBlank()) {
+            showTemporaryStatus("Filename is missing.")
+            return
+        }
+
+        viewModelScope.launch {
+            _downloadStatus.value = "Downloading $filename..."
+
+            val result = chatRepository.downloadFromUrl(fileDownload, context)
+
+            if (result.isSuccess) {
+                val file = result.getOrNull()
+                if (file != null) {
                     _downloadStatus.value = "Downloaded successfully: ${file.name}"
                     openFile(file, context)
                     delay(2000)
                     _downloadStatus.value = null
                 } else {
-                    val exception = result.exceptionOrNull()
-                    Log.e("ChatbotViewModel", "Download failed", exception)
-                    _downloadStatus.value = "Download failed: ${exception?.message}"
+                    _downloadStatus.value = "Download failed: Empty file"
                     delay(3000)
                     _downloadStatus.value = null
                 }
-            }
-        }
-    }
-
-    fun downloadFile(filename: String, context: Context) {  // Legacy; prefer downloadFromMessage for full integration
-        viewModelScope.launch {
-            _downloadStatus.value = "Downloading $filename..."
-
-            val result = chatRepository.downloadFile(filename, context)
-
-            if (result.isSuccess) {
-                val file = result.getOrNull()!!
-                _downloadStatus.value = "Downloaded successfully: ${file.name}"
-                openFile(file, context)
-                delay(2000)
-                _downloadStatus.value = null
             } else {
                 val exception = result.exceptionOrNull()
                 Log.e("ChatbotViewModel", "Download failed", exception)
@@ -125,34 +131,106 @@ class ChatbotViewModel(private val context: Context) : ViewModel() {  // Inject 
         }
     }
 
+    fun downloadMatchingFile(matchingFile: MatchingFile, context: Context) {
+        val filename = matchingFile.filename
+        if (filename.isNullOrBlank()) {
+            showTemporaryStatus("Filename is missing.")
+            return
+        }
+
+        viewModelScope.launch {
+            _downloadStatus.value = "Downloading $filename..."
+
+            val result = chatRepository.downloadMatchingFile(matchingFile, context)
+
+            if (result.isSuccess) {
+                val file = result.getOrNull()
+                if (file != null) {
+                    _downloadStatus.value = "Downloaded successfully: ${file.name}"
+                    openFile(file, context)
+                    delay(2000)
+                    _downloadStatus.value = null
+                } else {
+                    _downloadStatus.value = "Download failed: Empty file"
+                    delay(3000)
+                    _downloadStatus.value = null
+                }
+            } else {
+                val exception = result.exceptionOrNull()
+                Log.e("ChatbotViewModel", "Matching file download failed", exception)
+                _downloadStatus.value = "Download failed: ${exception?.message}"
+                delay(3000)
+                _downloadStatus.value = null
+            }
+        }
+    }
+
+    fun downloadFile(filename: String, context: Context) {
+        if (filename.isBlank()) {
+            showTemporaryStatus("Filename is missing.")
+            return
+        }
+
+        viewModelScope.launch {
+            _downloadStatus.value = "Downloading $filename..."
+
+            val result = chatRepository.downloadFile(filename, context)
+
+            if (result.isSuccess) {
+                val file = result.getOrNull()
+                if (file != null) {
+                    _downloadStatus.value = "Downloaded successfully: ${file.name}"
+                    openFile(file, context)
+                    delay(2000)
+                    _downloadStatus.value = null
+                } else {
+                    _downloadStatus.value = "Download failed: Empty file"
+                    delay(3000)
+                    _downloadStatus.value = null
+                }
+            } else {
+                val exception = result.exceptionOrNull()
+                Log.e("ChatbotViewModel", "Download failed", exception)
+                _downloadStatus.value = "Download failed: ${exception?.message}"
+                delay(3000)
+                _downloadStatus.value = null
+            }
+        }
+    }
 
     private fun openFile(file: File, context: Context) {
         try {
             val uri = FileProvider.getUriForFile(
                 context,
-                "${context.packageName}.fileprovider",  // Ensure <provider> in Manifest
+                "${context.packageName}.fileprovider",
                 file
             )
 
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, getMimeType(file.extension))  // Dynamic MIME
+                setDataAndType(uri, getMimeType(file.extension))
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
 
             context.startActivity(intent)
         } catch (e: Exception) {
             Log.e("ChatbotViewModel", "Failed to open file", e)
-            _downloadStatus.value = "Cannot open file: No app available"
-            viewModelScope.launch { delay(3000); _downloadStatus.value = null }
+            viewModelScope.launch {
+                _downloadStatus.value = "Cannot open file: No app available"
+                delay(3000)
+                _downloadStatus.value = null
+            }
         }
     }
 
     private fun getMimeType(extension: String): String {
         return when (extension.lowercase()) {
             "pdf" -> "application/pdf"
-            "doc", "docx" -> "application/msword"
-            "jpg", "jpeg", "png" -> "image/jpeg"
-            else -> "*/*"  // Generic fallback
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "txt" -> "text/plain"
+            else -> "*/*"
         }
     }
 
@@ -165,16 +243,25 @@ class ChatbotViewModel(private val context: Context) : ViewModel() {  // Inject 
         }
     }
 
+    private fun showTemporaryStatus(message: String) {
+        viewModelScope.launch {
+            _downloadStatus.value = message
+            delay(2500)
+            _downloadStatus.value = null
+        }
+    }
+
     fun clearChat() {
         _messages.value = emptyList()
     }
 
-    // ViewModelFactory for Context injection in Compose (use in ChatScreen)
     companion object {
-        fun Factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return ChatbotViewModel(context) as T
+        fun Factory(context: Context): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return ChatbotViewModel(context) as T
+                }
             }
-        }
     }
 }
