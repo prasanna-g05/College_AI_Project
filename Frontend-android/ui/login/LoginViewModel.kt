@@ -3,6 +3,7 @@ package com.pce.itassistant.ui.login
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pce.itassistant.data.AuthSession
 import com.pce.itassistant.data.RegisterRequest
 import com.pce.itassistant.data.Student
 import com.pce.itassistant.repository.AuthRepository
@@ -20,9 +21,11 @@ class LoginViewModel(private val authRepository: AuthRepository = AuthRepository
     private val _apiHealth = MutableStateFlow("checking")
     val apiHealth: StateFlow<String> = _apiHealth.asStateFlow()
 
-    // Single-shot event for login success toast
     var loginSuccessEvent = mutableStateOf(false)
         private set
+
+    private val _navigationEvent = MutableStateFlow<String?>(null)
+    val navigationEvent: StateFlow<String?> = _navigationEvent.asStateFlow()
 
     private val _registrationState = MutableStateFlow<LoginState>(LoginState.Idle)
     val registrationState: StateFlow<LoginState> = _registrationState.asStateFlow()
@@ -30,7 +33,8 @@ class LoginViewModel(private val authRepository: AuthRepository = AuthRepository
     sealed class LoginState {
         object Idle : LoginState()
         object Loading : LoginState()
-        data class Success(val student: Student) : LoginState()
+        data class Success(val authSession: AuthSession) : LoginState()
+        data class RegistrationSuccess(val student: Student) : LoginState()
         data class Error(val message: String) : LoginState()
     }
 
@@ -46,21 +50,38 @@ class LoginViewModel(private val authRepository: AuthRepository = AuthRepository
         loginSuccessEvent.value = false
     }
 
+    fun navigationEventConsumed() {
+        _navigationEvent.value = null
+    }
+
     fun loginStudent(erpNumber: String, password: String) {
         if (!isValidErpNumber(erpNumber)) {
             _loginState.value = LoginState.Error("ERP must be exactly 9 digits")
             return
         }
+
         if (!isValidPassword(password)) {
             _loginState.value = LoginState.Error("Password cannot be empty")
             return
         }
+
         _loginState.value = LoginState.Loading
+
         viewModelScope.launch {
             val result = authRepository.loginUser(erpNumber, password)
+
             if (result.isSuccess) {
-                _loginState.value = LoginState.Success(result.getOrNull()!!)
+                val authSession = result.getOrNull()!!
+                val student = authSession.student
+
+                _loginState.value = LoginState.Success(authSession)
                 loginSuccessEvent.value = true
+
+                _navigationEvent.value = when (student.role.lowercase()) {
+                    "admin" -> "admin_screen"
+                    "student" -> "home"
+                    else -> "home"
+                }
             } else {
                 val backendError = result.exceptionOrNull()?.message ?: "Login failed"
                 val userMessage = when {
@@ -79,9 +100,11 @@ class LoginViewModel(private val authRepository: AuthRepository = AuthRepository
         return try {
             val result = authRepository.registerUser(request)
             if (result.isSuccess) {
-                _registrationState.value = LoginState.Success(result.getOrNull()!!)
+                _registrationState.value = LoginState.RegistrationSuccess(result.getOrNull()!!)
             } else {
-                _registrationState.value = LoginState.Error(result.exceptionOrNull()?.message ?: "Registration failed")
+                _registrationState.value = LoginState.Error(
+                    result.exceptionOrNull()?.message ?: "Registration failed"
+                )
             }
             result
         } catch (e: Exception) {
