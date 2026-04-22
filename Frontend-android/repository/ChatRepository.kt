@@ -7,6 +7,7 @@ import com.pce.itassistant.data.ChatMessage
 import com.pce.itassistant.data.ChatRequest
 import com.pce.itassistant.data.ChatResponse
 import com.pce.itassistant.data.FileDownload
+import com.pce.itassistant.data.MatchingFile
 import com.pce.itassistant.network.ApiService
 import com.pce.itassistant.utils.SessionManager
 import kotlinx.coroutines.Dispatchers
@@ -17,8 +18,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 
-class ChatRepository(private val context: Context) {  // Inject Context for downloads; optional for SessionManager
-    private val apiService = ApiService.getInstance  // Fixed reference
+class ChatRepository(private val context: Context) {
+    private val apiService = ApiService.getInstance
 
     suspend fun sendMessage(
         message: String,
@@ -30,32 +31,38 @@ class ChatRepository(private val context: Context) {  // Inject Context for down
         return withContext(Dispatchers.IO) {
             try {
                 Log.d("ChatRepository", "Creating ChatRequest with query='$message', year=$year, semester=$semester")
+
                 val request = ChatRequest(
                     query = message,
                     erpNumber = erpNumber,
-                    year = year ?: getCurrentYearFromSession(),  // Optional: Fetch from SessionManager
+                    year = year ?: getCurrentYearFromSession(),
                     semester = semester,
                     course = course
                 )
+
                 val response: Response<ChatResponse> = apiService.sendMessage(request)
 
                 if (response.isSuccessful) {
                     response.body()?.let { chatResponse ->
-                        // Comprehensive logging for RAG debugging
                         Log.d("ChatRepository", "Full response: $chatResponse")
                         Log.d("ChatRepository", "Type: ${chatResponse.type}")
                         Log.d("ChatRepository", "Answer: ${chatResponse.answer}")
-                        Log.d("ChatRepository", "Context size: ${chatResponse.context.size}")
+                        Log.d("ChatRepository", "Context size: ${chatResponse.context?.size ?: 0}")
                         Log.d("ChatRepository", "Docs: ${chatResponse.docs}")
                         Log.d("ChatRepository", "File download: ${chatResponse.fileDownload}")
+                        Log.d("ChatRepository", "Matching files: ${chatResponse.matchingFiles}")
+
+                        val safeAnswer = chatResponse.answer?.takeIf { it.isNotBlank() }
+                            ?: "I found something related to your request."
 
                         Result.success(
                             ChatMessage(
-                                content = chatResponse.answer,
+                                content = safeAnswer,
                                 isUser = false,
                                 timestamp = System.currentTimeMillis(),
-                                fileDownload = chatResponse.fileDownload,  // Now FileDownload?
-                                isError = false
+                                isError = false,
+                                fileDownload = chatResponse.fileDownload,
+                                matchingFiles = chatResponse.matchingFiles ?: emptyList()
                             )
                         )
                     } ?: Result.failure(Exception("Invalid or empty response body"))
@@ -65,14 +72,16 @@ class ChatRepository(private val context: Context) {  // Inject Context for down
                 }
             } catch (e: Exception) {
                 Log.e("ChatRepository", "Error sending message", e)
-                Result.success(  // Use success with isError for UI feedback
+                Result.success(
                     ChatMessage(
                         content = "Error: ${e.message}",
                         isUser = false,
                         timestamp = System.currentTimeMillis(),
-                        isError = true
+                        isError = true,
+                        fileDownload = null,
+                        matchingFiles = emptyList()
                     )
-                )  // Or failure if strict; adjust based on UX
+                )
             }
         }
     }
@@ -99,10 +108,22 @@ class ChatRepository(private val context: Context) {  // Inject Context for down
         }
     }
 
-    // Optional: Handle FileDownload.url directly if backend provides it
     suspend fun downloadFromUrl(fileDownload: FileDownload, context: Context): Result<File> {
-        // Implement if needed: Use OkHttp to fetch from url, or fallback to filename from /download
-        return downloadFile(fileDownload.filename, context)  // For now, use existing endpoint
+        val filename = fileDownload.filename
+        return if (!filename.isNullOrBlank()) {
+            downloadFile(filename, context)
+        } else {
+            Result.failure(Exception("Filename is missing"))
+        }
+    }
+
+    suspend fun downloadMatchingFile(matchingFile: MatchingFile, context: Context): Result<File> {
+        val filename = matchingFile.filename
+        return if (!filename.isNullOrBlank()) {
+            downloadFile(filename, context)
+        } else {
+            Result.failure(Exception("Filename is missing"))
+        }
     }
 
     private fun saveFileToDownloads(body: ResponseBody, filename: String, context: Context): File {
@@ -142,10 +163,9 @@ class ChatRepository(private val context: Context) {  // Inject Context for down
         }
     }
 
-    // Helper: Fetch from SessionManager for contextual queries
     private fun getCurrentYearFromSession(): String? {
         val sessionManager = SessionManager(context)
         val student = sessionManager.getStudent()
-        return student?.erpNumber?.substring(0, 4)  // e.g., extract year from ERP like "2021PCE123"
+        return student?.erpNumber?.substring(0, 4)
     }
 }
